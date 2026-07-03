@@ -16,8 +16,14 @@ pip install -r requirements.txt
 > minutos dependendo da sua internet. Se você só quer testar o motor rápido (OpenCV) por
 > enquanto, pode remover a linha `simple-lama-inpainting` do `requirements.txt` antes de instalar.
 
-**Para processar vídeos, você também precisa do `ffmpeg` instalado e disponível no PATH**
-(usado para checar/remuxar o áudio original de volta no vídeo final):
+**Para processar vídeos, você também precisa do `ffmpeg`:**
+
+### Opção 1: Baixar automaticamente (recomendado para Windows)
+```bash
+python download_ffmpeg.py
+```
+
+### Opção 2: Instalação manual
 - macOS: `brew install ffmpeg`
 - Ubuntu/Debian: `sudo apt install ffmpeg`
 - Windows: baixe em https://ffmpeg.org/download.html e adicione ao PATH
@@ -82,16 +88,42 @@ pip install -r requirements.txt
 
 ```
 watermark_remover/
-├── main.py                # ponto de entrada
+├── main.py                    # ponto de entrada
+├── download_ffmpeg.py         # script para baixar FFmpeg automaticamente (Windows)
+├── build_exe.py              # script para criar executável standalone
 ├── core/
-│   ├── inpaint.py         # motores de inpainting: OpenCV (rápido) e LaMa (qualidade)
-│   └── video.py           # leitura/escrita de vídeo, marca fixa e em movimento (tracking),
-│                           #   remux de áudio via ffmpeg
+│   ├── inpaint.py            # motores de inpainting: OpenCV (rápido) e LaMa (qualidade)
+│   ├── video.py              # leitura/escrita de vídeo, marca fixa e em movimento (tracking)
+│   └── ffmpeg_utils.py       # utilitário para localizar FFmpeg (sistema ou empacotado)
 ├── ui/
-│   ├── main_window.py     # janela principal, lógica da aplicação e workers (imagem e vídeo)
-│   └── canvas.py          # widget de desenho de máscara sobre a imagem/frame
+│   ├── main_window.py        # janela principal, lógica da aplicação e workers
+│   └── canvas.py             # widget de desenho de máscara sobre a imagem/frame
 └── requirements.txt
 ```
+
+## Criando executável standalone
+
+Para distribuir o aplicativo sem exigir instalação Python do usuário:
+
+```bash
+# 1. Instale PyInstaller
+pip install pyinstaller
+
+# 2. Baixe FFmpeg (será incluído no executável)
+python download_ffmpeg.py
+
+# 3. Crie o executável
+python build_exe.py
+```
+
+O executável será criado em `dist/WatermarkRemover.exe` e incluirá:
+- ✓ Todas as dependências Python
+- ✓ FFmpeg embutido (sem necessidade de instalação separada)
+- ✓ Interface gráfica completa
+
+**Observação**: O modelo LaMa (~200MB) não é incluído no executável para mantê-lo leve.
+Ele será baixado automaticamente da internet na primeira vez que o usuário selecionar
+o motor "Qualidade".
 
 ## Como funciona o processamento de vídeo
 
@@ -116,9 +148,7 @@ watermark_remover/
   levar em conta os frames vizinhos.
 - Tracker mais robusto (ex: usar `opencv-contrib-python` com CSRT como dependência padrão, ou
   um tracker baseado em deep learning) pra lidar melhor com cortes de cena e perda de contraste.
-- Empacotamento com PyInstaller/Nuitka para gerar executável standalone por SO — atenção: como
-  o checkpoint do LaMa é baixado em tempo de execução (não embutido no instalador), isso mantém
-  o instalador leve, mas exige internet no primeiro uso em cada máquina.
+- ✓ ~~Empacotamento com PyInstaller/Nuitka~~ — já implementado via `build_exe.py`
 
 ## Notas técnicas
 

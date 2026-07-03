@@ -33,6 +33,7 @@ import cv2
 import numpy as np
 
 from core.inpaint import inpaint_image
+from core.ffmpeg_utils import get_ffmpeg_path, get_ffprobe_path, check_ffmpeg_available
 
 BBox = Tuple[int, int, int, int]  # (x, y, largura, altura)
 
@@ -80,12 +81,15 @@ def read_first_frame(path: str) -> np.ndarray:
 
 
 def _probe_has_audio(path: str) -> bool:
-    if not _ffmpeg_available():
+    try:
+        ffprobe = get_ffprobe_path()
+    except FileNotFoundError:
         return False
+    
     try:
         result = subprocess.run(
             [
-                "ffprobe", "-v", "error", "-select_streams", "a",
+                ffprobe, "-v", "error", "-select_streams", "a",
                 "-show_entries", "stream=index", "-of", "csv=p=0", path,
             ],
             capture_output=True, text=True, timeout=30,
@@ -96,7 +100,8 @@ def _probe_has_audio(path: str) -> bool:
 
 
 def _ffmpeg_available() -> bool:
-    return shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
+    available, _ = check_ffmpeg_available()
+    return available
 
 
 # ---------------------------------------------------------------------------
@@ -113,11 +118,9 @@ def _run_frame_pipeline(
     progress_callback: Optional[Callable[[int, int], None]],
     should_cancel: Optional[Callable[[], bool]],
 ) -> None:
-    if not _ffmpeg_available():
-        raise VideoError(
-            "ffmpeg/ffprobe não encontrados no PATH. Instale o ffmpeg "
-            "(https://ffmpeg.org/download.html) para processar vídeos."
-        )
+    available, message = check_ffmpeg_available()
+    if not available:
+        raise VideoError(message)
 
     cap = cv2.VideoCapture(input_path)
     if not cap.isOpened():
@@ -164,8 +167,9 @@ def _run_frame_pipeline(
 
 def _mux_audio(silent_video_path: str, original_with_audio_path: str, output_path: str) -> None:
     """Copia (sem recodificar) o áudio do vídeo original para dentro do vídeo já processado."""
+    ffmpeg = get_ffmpeg_path()
     cmd = [
-        "ffmpeg", "-y",
+        ffmpeg, "-y",
         "-i", silent_video_path,
         "-i", original_with_audio_path,
         "-c:v", "copy",

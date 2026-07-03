@@ -122,8 +122,16 @@ def _get_lama_model():
 
     with _lama_lock:
         if _lama_model is None:  # checagem dupla após adquirir o lock
+            # Força o uso de CPU para evitar problemas com CUDA mal configurado
+            import os
+            os.environ['CUDA_VISIBLE_DEVICES'] = ''
+            
+            import torch
+            # Força CPU explicitamente
+            torch.set_default_device('cpu')
+            
             from simple_lama_inpainting import SimpleLama
-            _lama_model = SimpleLama()
+            _lama_model = SimpleLama(device='cpu')
     return _lama_model
 
 
