@@ -127,11 +127,28 @@ def _get_lama_model():
             os.environ['CUDA_VISIBLE_DEVICES'] = ''
             
             import torch
-            # Força CPU explicitamente
+            # Força CPU explicitamente e desabilita completamente CUDA
             torch.set_default_device('cpu')
             
+            # CRÍTICO: Força mapeamento para CPU ao carregar o modelo JIT
+            # Isso resolve o erro "Could not run 'aten::empty_strided' with arguments from the 'CUDA' backend"
+            torch.set_default_tensor_type(torch.FloatTensor)  # CPU tensor type
+            
             from simple_lama_inpainting import SimpleLama
-            _lama_model = SimpleLama(device='cpu')
+            
+            # Monkey-patch para forçar map_location='cpu' no torch.jit.load
+            original_jit_load = torch.jit.load
+            def patched_jit_load(path, *args, **kwargs):
+                kwargs['map_location'] = 'cpu'
+                return original_jit_load(path, *args, **kwargs)
+            torch.jit.load = patched_jit_load
+            
+            try:
+                _lama_model = SimpleLama(device='cpu')
+            finally:
+                # Restaura o método original
+                torch.jit.load = original_jit_load
+    
     return _lama_model
 
 
