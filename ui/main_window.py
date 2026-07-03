@@ -22,6 +22,7 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QFont
 
 from ui.canvas import MaskCanvas
+from ui.dashboard import DashboardWidget
 from core.inpaint import inpaint_image, InpaintMethod
 from core.video import (
     probe_video, read_first_frame, process_video, process_video_moving_watermark, VideoError
@@ -189,8 +190,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         logger.info("Inicializando MainWindow...")
-        self.setWindowTitle("Removedor de Marca D'água — MVP")
-        self.resize(1100, 780)
+        self.setWindowTitle("Watermark Remover - Dashboard")
+        self.resize(1200, 800)
 
         self._result_image: np.ndarray | None = None  # último resultado de IMAGEM processada (BGR)
         self._image_worker: ImageProcessWorker | None = None
@@ -216,7 +217,87 @@ class MainWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         root_layout = QVBoxLayout(central)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
 
+        # Stack widget para alternar entre dashboard e editor
+        self.stack = QStackedWidget()
+        root_layout.addWidget(self.stack)
+        
+        # Página 0: Dashboard
+        self.dashboard = DashboardWidget()
+        self.dashboard.tool_selected.connect(self.on_tool_selected)
+        self.stack.addWidget(self.dashboard)
+        
+        # Página 1: Watermark Editor
+        self.editor_widget = self._build_editor_widget()
+        self.stack.addWidget(self.editor_widget)
+        
+        # Inicia na dashboard
+        self.stack.setCurrentIndex(0)
+        
+        # --- status bar ---
+        self.status = QStatusBar()
+        self.setStatusBar(self.status)
+        self.status.showMessage("Bem-vindo! Selecione uma ferramenta para começar.")
+    
+    def on_tool_selected(self, tool_id: str):
+        """Callback quando uma ferramenta é selecionada na dashboard."""
+        logger.info(f"Ferramenta selecionada: {tool_id}")
+        
+        if tool_id == "watermark_editor":
+            # Abre o editor de marca d'água
+            self.stack.setCurrentIndex(1)
+            self.status.showMessage("Watermark Editor: Abra uma imagem ou vídeo para começar.")
+        else:
+            # Outras ferramentas ainda não implementadas
+            QMessageBox.information(
+                self,
+                "Em breve",
+                f"A ferramenta '{tool_id}' estará disponível em breve!\n\n"
+                "Por enquanto, apenas o Watermark Editor está funcional."
+            )
+    
+    def _build_editor_widget(self) -> QWidget:
+        """Constrói o widget do editor de marca d'água."""
+        editor = QWidget()
+        editor_layout = QVBoxLayout(editor)
+        editor_layout.setContentsMargins(0, 0, 0, 0)
+        editor_layout.setSpacing(0)
+        
+        # Barra superior com botão voltar
+        top_bar = QHBoxLayout()
+        top_bar.setContentsMargins(10, 5, 10, 5)
+        
+        self.btn_back = QPushButton("← Voltar")
+        self.btn_back.clicked.connect(lambda: self.stack.setCurrentIndex(0))
+        self.btn_back.setStyleSheet("""
+            QPushButton {
+                background: #7B68EE;
+                color: white;
+                border: none;
+                border-radius: 5px;
+                padding: 8px 20px;
+                font-size: 11pt;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background: #6A5ACD;
+            }
+        """)
+        top_bar.addWidget(self.btn_back)
+        
+        title_editor = QLabel("💧 Watermark Editor")
+        title_editor.setStyleSheet("font-size: 14pt; font-weight: bold; color: #2C3E50;")
+        top_bar.addWidget(title_editor)
+        top_bar.addStretch()
+        
+        editor_layout.addLayout(top_bar)
+        
+        # Conteúdo do editor (UI original)
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        
         # --- barra de ferramentas superior ---
         toolbar = QHBoxLayout()
 
@@ -253,7 +334,7 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self.btn_clear_mask)
 
         toolbar.addStretch()
-        root_layout.addLayout(toolbar)
+        content_layout.addLayout(toolbar)
 
         # --- barra específica de vídeo: marca fixa vs em movimento ---
         video_bar = QHBoxLayout()
@@ -270,7 +351,7 @@ class MainWindow(QMainWindow):
         video_bar.addWidget(self.radio_watermark_fixed)
         video_bar.addWidget(self.radio_watermark_moving)
         video_bar.addStretch()
-        root_layout.addLayout(video_bar)
+        content_layout.addLayout(video_bar)
         self._set_video_controls_visible(False)  # só aparece quando um vídeo é aberto
 
         # --- segunda barra: motor de processamento + ações ---
@@ -303,7 +384,7 @@ class MainWindow(QMainWindow):
         actions_bar.addWidget(self.progress)
 
         actions_bar.addStretch()
-        root_layout.addLayout(actions_bar)
+        content_layout.addLayout(actions_bar)
 
         # --- canvas com scroll (imagens/frames grandes) ---
         self.canvas = MaskCanvas()
@@ -311,12 +392,11 @@ class MainWindow(QMainWindow):
         scroll.setWidget(self.canvas)
         scroll.setWidgetResizable(False)
         scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        root_layout.addWidget(scroll, stretch=1)
-
-        # --- status bar ---
-        self.status = QStatusBar()
-        self.setStatusBar(self.status)
-        self.status.showMessage("Abra uma imagem ou vídeo para começar.")
+        content_layout.addWidget(scroll, stretch=1)
+        
+        editor_layout.addWidget(content)
+        
+        return editor
 
     def _set_video_controls_visible(self, visible: bool):
         self.video_mode_label.setVisible(visible)
