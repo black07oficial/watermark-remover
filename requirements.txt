@@ -1,0 +1,11 @@
+PyQt6>=6.6
+opencv-python>=4.9
+numpy>=1.26
+Pillow>=10.0
+
+# Motor de qualidade (LaMa) — inclui PyTorch como dependência transitiva.
+# Primeira execução do motor "Qualidade" baixa um checkpoint (~200MB) da internet.
+simple-lama-inpainting>=0.1.2
+
+# Processamento de vídeo requer o binário ffmpeg/ffprobe instalado no sistema
+# (não é um pacote pip — veja instruções no README).
