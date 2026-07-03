@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import sys
 import threading
+import logging
 
 import cv2
 import numpy as np
@@ -25,6 +26,8 @@ from core.inpaint import inpaint_image, InpaintMethod
 from core.video import (
     probe_video, read_first_frame, process_video, process_video_moving_watermark, VideoError
 )
+
+logger = logging.getLogger('WatermarkRemover.UI')
 
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp")
 VIDEO_EXTENSIONS = (".mp4", ".mov", ".avi", ".mkv")
@@ -77,12 +80,20 @@ class ModelDownloadWorker(QThread):
     finished_ok = pyqtSignal()
     finished_error = pyqtSignal(str)
     
+    def __init__(self):
+        super().__init__()
+        self._logger = logging.getLogger('WatermarkRemover.ModelDownload')
+    
     def run(self):
         try:
+            self._logger.info("Iniciando download/carregamento do modelo LaMa...")
             # Importa e carrega o modelo (faz download se necessário)
             from core.inpaint import _get_lama_model
+            self._logger.info("Chamando _get_lama_model()...")
             _get_lama_model()
+            self._logger.info("Modelo LaMa carregado com sucesso!")
         except Exception as exc:
+            self._logger.exception("ERRO ao carregar modelo LaMa:")
             self.finished_error.emit(str(exc))
             return
         self.finished_ok.emit()
@@ -99,11 +110,16 @@ class ImageProcessWorker(QThread):
         self._image = image
         self._mask = mask
         self._method = method
+        self._logger = logging.getLogger('WatermarkRemover.ImageWorker')
 
     def run(self):
         try:
+            self._logger.info(f"Iniciando processamento de imagem com método: {self._method}")
+            self._logger.debug(f"Imagem: {self._image.shape}, Máscara: {self._mask.shape}")
             result = inpaint_image(self._image, self._mask, method=self._method)
+            self._logger.info("Processamento de imagem concluído com sucesso")
         except Exception as exc:  # noqa: BLE001 - repassamos o erro pra UI mostrar
+            self._logger.exception(f"Erro no processamento de imagem:")
             self.finished_error.emit(str(exc))
             return
         self.finished_ok.emit(result)
@@ -172,6 +188,7 @@ class VideoProcessWorker(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        logger.info("Inicializando MainWindow...")
         self.setWindowTitle("Removedor de Marca D'água — MVP")
         self.resize(1100, 780)
 
@@ -191,6 +208,7 @@ class MainWindow(QMainWindow):
         self._pending_video_params = None  # guarda parâmetros durante download do modelo
 
         self._build_ui()
+        logger.info("MainWindow inicializada com sucesso")
 
     # ---------- construção da UI ----------
 
@@ -427,6 +445,8 @@ class MainWindow(QMainWindow):
     
     def _download_lama_model_then_process(self, image: np.ndarray, mask: np.ndarray, method: str):
         """Baixa o modelo LaMa com popup de progresso, depois processa a imagem."""
+        logger.info("Iniciando download do modelo LaMa...")
+        
         # Cria dialog de download
         self._model_download_dialog = ModelDownloadDialog(self)
         
@@ -438,7 +458,9 @@ class MainWindow(QMainWindow):
         self._model_download_worker.finished_error.connect(self._on_model_download_error)
         
         # Inicia download e mostra dialog
+        logger.info("Iniciando worker de download...")
         self._model_download_worker.start()
+        logger.info("Mostrando dialog de download...")
         self._model_download_dialog.exec()
     
     def _on_model_download_finished(self, image: np.ndarray, mask: np.ndarray, method: str):
@@ -637,23 +659,22 @@ class MainWindow(QMainWindow):
 def main():
     from PyQt6.QtWidgets import QApplication
     import sys
-    import traceback
     
-    def exception_hook(exctype, value, tb):
-        """Hook para capturar exceções não tratadas."""
-        print("=" * 80, file=sys.stderr)
-        print("ERRO NÃO TRATADO:", file=sys.stderr)
-        print("=" * 80, file=sys.stderr)
-        traceback.print_exception(exctype, value, tb, file=sys.stderr)
-        print("=" * 80, file=sys.stderr)
-        sys.__excepthook__(exctype, value, tb)
-    
-    sys.excepthook = exception_hook
-    
+    logger.info("Criando QApplication...")
     app = QApplication(sys.argv)
+    logger.info("QApplication criada")
+    
+    logger.info("Criando MainWindow...")
     window = MainWindow()
+    logger.info("MainWindow criada")
+    
+    logger.info("Mostrando janela...")
     window.show()
-    sys.exit(app.exec())
+    logger.info("Janela visível, entrando no event loop...")
+    
+    exit_code = app.exec()
+    logger.info(f"Event loop encerrado com código: {exit_code}")
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":
