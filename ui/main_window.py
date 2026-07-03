@@ -15,9 +15,10 @@ import numpy as np
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QFileDialog, QSlider, QButtonGroup, QRadioButton, QMessageBox, QScrollArea,
-    QComboBox, QStatusBar, QProgressBar
+    QComboBox, QStatusBar, QProgressBar, QDialog
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QFont
 
 from ui.canvas import MaskCanvas
 from core.inpaint import inpaint_image, InpaintMethod
@@ -30,6 +31,61 @@ VIDEO_EXTENSIONS = (".mp4", ".mov", ".avi", ".mkv")
 
 WATERMARK_FIXED = "fixed"
 WATERMARK_MOVING = "moving"
+
+
+class ModelDownloadDialog(QDialog):
+    """Dialog modal que mostra o progresso do download do modelo LaMa."""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Baixando Modelo LaMa")
+        self.setModal(True)
+        self.setFixedSize(450, 150)
+        
+        layout = QVBoxLayout(self)
+        
+        # Título
+        title = QLabel("Baixando Modelo de Deep Learning")
+        font = QFont()
+        font.setPointSize(11)
+        font.setBold(True)
+        title.setFont(font)
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+        
+        # Mensagem
+        self.message = QLabel(
+            "Baixando modelo LaMa (~200MB)...\n"
+            "Isso acontece apenas uma vez.\n"
+            "Aguarde, pode levar alguns minutos."
+        )
+        self.message.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.message.setWordWrap(True)
+        layout.addWidget(self.message)
+        
+        # Barra de progresso indeterminada
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 0)  # modo indeterminado
+        layout.addWidget(self.progress)
+        
+        layout.addStretch()
+
+
+class ModelDownloadWorker(QThread):
+    """Worker para baixar/carregar o modelo LaMa em background."""
+    
+    finished_ok = pyqtSignal()
+    finished_error = pyqtSignal(str)
+    
+    def run(self):
+        try:
+            # Importa e carrega o modelo (faz download se necessário)
+            from core.inpaint import _get_lama_model
+            _get_lama_model()
+        except Exception as exc:
+            self.finished_error.emit(str(exc))
+            return
+        self.finished_ok.emit()
 
 
 class ImageProcessWorker(QThread):
@@ -122,11 +178,17 @@ class MainWindow(QMainWindow):
         self._result_image: np.ndarray | None = None  # último resultado de IMAGEM processada (BGR)
         self._image_worker: ImageProcessWorker | None = None
         self._video_worker: VideoProcessWorker | None = None
+        self._model_download_worker: ModelDownloadWorker | None = None
+        self._model_download_dialog: ModelDownloadDialog | None = None
 
         # estado do modo vídeo
         self._is_video = False
         self._video_path: str | None = None
         self._video_info = None  # core.video.VideoInfo
+        
+        # flag para saber se modelo LaMa já foi carregado
+        self._lama_model_loaded = False
+        self._pending_video_params = None  # guarda parâmetros durante download do modelo
 
         self._build_ui()
 
@@ -344,11 +406,14 @@ class MainWindow(QMainWindow):
         mask = self.canvas.get_mask_as_numpy()
         method = self.engine_combo.currentData()
 
+        # Se escolheu LaMa e modelo ainda não foi carregado, baixa primeiro
+        if method == InpaintMethod.QUALITY_LAMA and not self._lama_model_loaded:
+            self._download_lama_model_then_process(image, mask, method)
+            return
+
+        # Processa direto
         if method == InpaintMethod.QUALITY_LAMA:
-            self.status.showMessage(
-                "Processando com LaMa... na primeira vez isso inclui baixar o modelo (~200MB) "
-                "e pode demorar bastante."
-            )
+            self.status.showMessage("Processando com LaMa...")
         else:
             self.status.showMessage("Processando...")
 
@@ -359,6 +424,53 @@ class MainWindow(QMainWindow):
         self._image_worker.finished_ok.connect(self._on_image_finished)
         self._image_worker.finished_error.connect(self._on_process_error)
         self._image_worker.start()
+    
+    def _download_lama_model_then_process(self, image: np.ndarray, mask: np.ndarray, method: str):
+        """Baixa o modelo LaMa com popup de progresso, depois processa a imagem."""
+        # Cria dialog de download
+        self._model_download_dialog = ModelDownloadDialog(self)
+        
+        # Cria worker de download
+        self._model_download_worker = ModelDownloadWorker()
+        self._model_download_worker.finished_ok.connect(
+            lambda: self._on_model_download_finished(image, mask, method)
+        )
+        self._model_download_worker.finished_error.connect(self._on_model_download_error)
+        
+        # Inicia download e mostra dialog
+        self._model_download_worker.start()
+        self._model_download_dialog.exec()
+    
+    def _on_model_download_finished(self, image: np.ndarray, mask: np.ndarray, method: str):
+        """Modelo baixado com sucesso, agora processa a imagem."""
+        self._lama_model_loaded = True
+        if self._model_download_dialog:
+            self._model_download_dialog.accept()
+            self._model_download_dialog = None
+        
+        # Agora processa a imagem
+        self.status.showMessage("Modelo carregado! Processando imagem...")
+        self.progress.setRange(0, 0)
+        self._set_busy(True, cancelable=False)
+        
+        self._image_worker = ImageProcessWorker(image, mask, method)
+        self._image_worker.finished_ok.connect(self._on_image_finished)
+        self._image_worker.finished_error.connect(self._on_process_error)
+        self._image_worker.start()
+    
+    def _on_model_download_error(self, error_msg: str):
+        """Erro ao baixar modelo."""
+        if self._model_download_dialog:
+            self._model_download_dialog.reject()
+            self._model_download_dialog = None
+        
+        QMessageBox.critical(
+            self, 
+            "Erro ao carregar modelo",
+            f"Não foi possível carregar o modelo LaMa (verifique sua conexão com a internet "
+            f"na primeira execução — o modelo precisa ser baixado uma vez). Detalhe:\n\n{error_msg}"
+        )
+        self.status.showMessage("Erro ao carregar modelo LaMa.")
 
     def _on_image_finished(self, result: np.ndarray):
         self._set_busy(False)
@@ -380,6 +492,15 @@ class MainWindow(QMainWindow):
         watermark_mode = WATERMARK_MOVING if self.radio_watermark_moving.isChecked() else WATERMARK_FIXED
 
         method = self.engine_combo.currentData()
+        
+        # Se escolheu LaMa e modelo ainda não foi carregado, baixa primeiro
+        if method == InpaintMethod.QUALITY_LAMA and not self._lama_model_loaded:
+            # Salva os parâmetros para usar depois do download
+            self._pending_video_params = (watermark_mode, method)
+            self._download_lama_model_then_process_video()
+            return
+        
+        # Aviso de performance para LaMa em vídeo
         if method == InpaintMethod.QUALITY_LAMA:
             resp = QMessageBox.question(
                 self, "Aviso de desempenho",
@@ -391,6 +512,47 @@ class MainWindow(QMainWindow):
             if resp != QMessageBox.StandardButton.Yes:
                 return
 
+        self._start_video_processing(watermark_mode, method)
+    
+    def _download_lama_model_then_process_video(self):
+        """Baixa o modelo LaMa com popup de progresso, depois processa o vídeo."""
+        # Cria dialog de download
+        self._model_download_dialog = ModelDownloadDialog(self)
+        
+        # Cria worker de download
+        self._model_download_worker = ModelDownloadWorker()
+        self._model_download_worker.finished_ok.connect(self._on_model_download_finished_video)
+        self._model_download_worker.finished_error.connect(self._on_model_download_error)
+        
+        # Inicia download e mostra dialog
+        self._model_download_worker.start()
+        self._model_download_dialog.exec()
+    
+    def _on_model_download_finished_video(self):
+        """Modelo baixado com sucesso, agora processa o vídeo."""
+        self._lama_model_loaded = True
+        if self._model_download_dialog:
+            self._model_download_dialog.accept()
+            self._model_download_dialog = None
+        
+        # Recupera parâmetros salvos
+        watermark_mode, method = self._pending_video_params
+        
+        # Aviso de performance
+        resp = QMessageBox.question(
+            self, "Aviso de desempenho",
+            f"O motor Qualidade (LaMa) processa frame a frame e pode ser bem lento em vídeo "
+            f"(este vídeo tem {self._video_info.frame_count} frames). "
+            f"Em CPU, isso pode levar de minutos a horas dependendo do hardware. Continuar?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if resp != QMessageBox.StandardButton.Yes:
+            return
+        
+        self._start_video_processing(watermark_mode, method)
+    
+    def _start_video_processing(self, watermark_mode: str, method: str):
+        """Inicia o processamento de vídeo propriamente dito."""
         default_name = os.path.splitext(os.path.basename(self._video_path))[0] + "_sem_marca.mp4"
         output_path, _ = QFileDialog.getSaveFileName(
             self, "Salvar vídeo processado como", default_name, "MP4 (*.mp4)"
@@ -474,6 +636,20 @@ class MainWindow(QMainWindow):
 
 def main():
     from PyQt6.QtWidgets import QApplication
+    import sys
+    import traceback
+    
+    def exception_hook(exctype, value, tb):
+        """Hook para capturar exceções não tratadas."""
+        print("=" * 80, file=sys.stderr)
+        print("ERRO NÃO TRATADO:", file=sys.stderr)
+        print("=" * 80, file=sys.stderr)
+        traceback.print_exception(exctype, value, tb, file=sys.stderr)
+        print("=" * 80, file=sys.stderr)
+        sys.__excepthook__(exctype, value, tb)
+    
+    sys.excepthook = exception_hook
+    
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
