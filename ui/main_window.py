@@ -16,7 +16,7 @@ import numpy as np
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QFileDialog, QSlider, QButtonGroup, QRadioButton, QMessageBox, QScrollArea,
-    QComboBox, QStatusBar, QProgressBar, QDialog
+    QComboBox, QStatusBar, QProgressBar, QDialog, QStackedWidget
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QFont
